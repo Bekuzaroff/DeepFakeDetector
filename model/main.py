@@ -5,10 +5,14 @@
 
 import cv2
 
+from dataset.dataset import Dataset
 from preprocess.image_preprocess import ImagePreprocess
+import torchvision as tv
+
+import kagglehub
 
 
 if __name__ == '__main__':
-    im_preproc = ImagePreprocess()
-    im = im_preproc.read_image("cathedral.jpg")
-    print(im)
+    dataset = Dataset("Train")
+
+    
