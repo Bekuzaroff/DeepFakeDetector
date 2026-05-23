@@ -1,15 +1,17 @@
+"""
+main model inference
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import timm
-from transformers import ViTImageProcessor, ViTForImageClassification
 import torchvision.transforms as transforms
 from torchvision import models
 from PIL import Image
 import os
 import numpy as np
-import pandas as pd
 from pathlib import Path
 import logging
 import json
@@ -19,9 +21,6 @@ from sklearn.metrics import (
     confusion_matrix, classification_report, roc_auc_score, 
     roc_curve, precision_recall_curve, accuracy_score
 )
-from sklearn.ensemble import VotingClassifier
-from sklearn.linear_model import LogisticRegression
-import cv2
 from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
@@ -103,72 +102,6 @@ class DeepfakeDataset(Dataset):
             default_img = torch.zeros(3, 224, 224)
             return default_img, torch.tensor(label, dtype=torch.long)
 
-class FaceExtractionDataset(DeepfakeDataset):
-    """Dataset with face extraction preprocessing"""
-    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        
-        # Initialize face detector
-        try:
-            import cv2.data
-            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        except:
-            logger.warning("Face detection not available")
-            self.face_cascade = None
-    
-    def _extract_face(self, image):
-        """Extract face from image using OpenCV"""
-        if self.face_cascade is None:
-            return image
-        
-        # Convert PIL to OpenCV format
-        img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        
-        # Detect faces
-        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
-        
-        if len(faces) > 0:
-            # Get the largest face
-            largest_face = max(faces, key=lambda x: x[2] * x[3])
-            x, y, w, h = largest_face
-            
-            # Extract face with some padding
-            padding = 20
-            x = max(0, x - padding)
-            y = max(0, y - padding)
-            w = min(img_cv.shape[1] - x, w + 2 * padding)
-            h = min(img_cv.shape[0] - y, h + 2 * padding)
-            
-            face_img = img_cv[y:y+h, x:x+w]
-            face_pil = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
-            return face_pil
-        
-        return image
-    
-    def __getitem__(self, idx):
-        img_path, label = self.samples[idx]
-        
-        try:
-            image = Image.open(img_path).convert('RGB')
-            
-            # Extract face
-            image = self._extract_face(image)
-            
-            if self.augment:
-                image = self.augment_transform(image)
-            
-            if self.transform:
-                image = self.transform(image)
-            
-            return image, torch.tensor(label, dtype=torch.long)
-        
-        except Exception as e:
-            logger.warning(f"Error processing {img_path}: {e}")
-            default_img = torch.zeros(3, 224, 224)
-            return default_img, torch.tensor(label, dtype=torch.long)
-
 class EfficientNetModel(nn.Module):
     """EfficientNet-based deepfake detector"""
     
@@ -214,26 +147,6 @@ class ResNetModel(nn.Module):
     def forward(self, x):
         return self.backbone(x)
 
-class ViTModel(nn.Module):
-    """Vision Transformer for deepfake detection"""
-    
-    def __init__(self, model_name='vit_base_patch16_224', num_classes=2, dropout=0.1):
-        super().__init__()
-        self.backbone = timm.create_model(model_name, pretrained=True)
-        
-        # Replace head
-        in_features = self.backbone.head.in_features
-        self.backbone.head = nn.Sequential(
-            nn.Dropout(dropout),
-            nn.Linear(in_features, 512),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(512, num_classes)
-        )
-    
-    def forward(self, x):
-        return self.backbone(x)
-
 class EnhancedDeepfakeDetector:
     """Enhanced ensemble deepfake detection system"""
     
@@ -262,7 +175,6 @@ class EnhancedDeepfakeDetector:
             'models': {
                 'efficientnet_b0': {'dropout': 0.3},
                 'resnet50': {'dropout': 0.3},
-                'vit_base_patch16_224': {'dropout': 0.1},
             },
             'training': {
                 'batch_size': 32,
@@ -287,8 +199,6 @@ class EnhancedDeepfakeDetector:
                     model = EfficientNetModel(model_name, dropout=model_config['dropout'])
                 elif 'resnet' in model_name:
                     model = ResNetModel(model_name, dropout=model_config['dropout'])
-                elif 'vit' in model_name:
-                    model = ViTModel(model_name, dropout=model_config['dropout'])
                 else:
                     logger.warning(f"Unknown model type: {model_name}")
                     continue
@@ -314,9 +224,9 @@ class EnhancedDeepfakeDetector:
             except Exception as e:
                 logger.error(f"Error building {model_name}: {e}")
     
-    def create_data_loaders(self, data_dir, use_face_extraction=False):
+    def create_data_loaders(self, data_dir):
         """Create data loaders for training and validation"""
-        dataset_class = FaceExtractionDataset if use_face_extraction else DeepfakeDataset
+        dataset_class = DeepfakeDataset
         
         # Create datasets
         train_dataset = dataset_class(data_dir, 'train', self.train_transform, augment=True)
@@ -364,6 +274,9 @@ class EnhancedDeepfakeDetector:
         best_val_auc = 0
         patience_counter = 0
         
+        # Создаем папку model если её нет
+        os.makedirs("./model", exist_ok=True)
+        
         logger.info(f"Training {model_name}...")
         
         for epoch in range(self.config['training']['num_epochs']):
@@ -405,16 +318,22 @@ class EnhancedDeepfakeDetector:
             if val_auc > best_val_auc:
                 best_val_auc = val_auc
                 patience_counter = 0
-                # Save best model
-                torch.save(model.state_dict(), f"best_{model_name}.pth")
+                torch.save(model.state_dict(), f"./model/best_{model_name}.pth")
+                logger.info(f"Saved best model to ./model/best_{model_name}.pth")
             else:
                 patience_counter += 1
                 if patience_counter >= self.config['training']['patience']:
                     logger.info(f"Early stopping for {model_name}")
                     break
         
-        # Load best model
-        model.load_state_dict(torch.load(f"best_{model_name}.pth"))
+        
+        best_model_path = f"./model/best_{model_name}.pth"
+        if os.path.exists(best_model_path):
+            model.load_state_dict(torch.load(best_model_path))
+            logger.info(f"Loaded best model from {best_model_path}")
+        else:
+            logger.warning(f"Best model file not found: {best_model_path}")
+        
         return best_val_auc
     
     def evaluate_model(self, model, data_loader, criterion):
@@ -444,7 +363,7 @@ class EnhancedDeepfakeDetector:
         
         return val_loss, val_acc, val_auc
     
-    def train_ensemble(self, data_dir, use_face_extraction=False):
+    def train_ensemble(self, data_dir):
         """Train the entire ensemble"""
         logger.info("Starting ensemble training...")
         
@@ -452,7 +371,7 @@ class EnhancedDeepfakeDetector:
         self.build_models()
         
         # Create data loaders
-        train_loader, val_loader = self.create_data_loaders(data_dir, use_face_extraction)
+        train_loader, val_loader = self.create_data_loaders(data_dir)
         
         # Train each model
         model_performance = {}
@@ -572,7 +491,7 @@ class EnhancedDeepfakeDetector:
         """Generate comprehensive evaluation report with visualizations"""
         
         # Create results directory
-        results_dir = Path("evaluation_results")
+        results_dir = Path("./model/evaluation_results")
         results_dir.mkdir(exist_ok=True)
         
         # Ensemble metrics
@@ -663,6 +582,8 @@ class EnhancedDeepfakeDetector:
     
     def save_model(self, save_path):
         """Save the entire ensemble"""
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
         save_data = {
             'config': self.config,
             'model_state_dicts': {name: model.state_dict() for name, model in self.models.items()}
@@ -672,6 +593,9 @@ class EnhancedDeepfakeDetector:
     
     def load_model(self, load_path):
         """Load a saved ensemble"""
+        if not os.path.exists(load_path):
+            raise FileNotFoundError(f"Model file not found: {load_path}")
+        
         save_data = torch.load(load_path, map_location=device)
         self.config = save_data['config']
         
@@ -682,25 +606,28 @@ class EnhancedDeepfakeDetector:
         for name, state_dict in save_data['model_state_dicts'].items():
             if name in self.models:
                 self.models[name].load_state_dict(state_dict)
+                logger.info(f"Loaded model: {name}")
         
         logger.info(f"Ensemble loaded from {load_path}")
-
 def main():
     """Main execution function with comprehensive workflow"""
-    print("🚀 Enhanced Deepfake Detection System")
+    print("Enhanced Deepfake Detection System")
     print("=====================================")
+    
+    # Создаем структуру папок
+    os.makedirs("./model", exist_ok=True)
+    os.makedirs("./model/evaluation_results", exist_ok=True)
     
     # Configuration
     config = {
         'models': {
             'efficientnet_b0': {'dropout': 0.3},
             'resnet50': {'dropout': 0.3},
-            'vit_base_patch16_224': {'dropout': 0.1},
         },
         'training': {
-            'batch_size': 16,  # Adjusted for memory constraints
+            'batch_size': 16,
             'learning_rate': 1e-4,
-            'num_epochs': 2,  # Reduced for demo
+            'num_epochs': 2,
             'weight_decay': 1e-5,
             'patience': 3,
         },
@@ -713,50 +640,57 @@ def main():
     # Initialize detector
     detector = EnhancedDeepfakeDetector(config)
     
-    # Example usage
-    data_dir = "./data"  # Update with your dataset path
+    data_dir = "./model/data"
     
     if os.path.exists(data_dir):
-        print("📚 Training ensemble models...")
-        detector.train_ensemble(data_dir, use_face_extraction=False)
+        print(f"Training ensemble models from: {data_dir}")
+        detector.train_ensemble(data_dir)
         
-        print("💾 Saving trained models...")
-        detector.save_model("enhanced_deepfake_ensemble.pth")
+        print("Saving trained models...")
+        detector.save_model("./model/enhanced_deepfake_ensemble.pth")
         
-        print("📊 Evaluating on test set...")
+        print("Evaluating on test set...")
         detector.evaluate_ensemble(data_dir, 'test')
         
     else:
-        print(f"❌ Dataset directory '{data_dir}' not found.")
-        print("Please organize your data as follows:")
-        print("deepfake_dataset/")
-        print("├── train/")
-        print("│   ├── real/")
-        print("│   └── fake/")
-        print("├── val/")
-        print("│   ├── real/")
-        print("│   └── fake/")
-        print("└── test/")
-        print("    ├── real/")
-        print("    └── fake/")
+        print(f"Dataset directory '{data_dir}' not found.")
+        print(f"Current directory: {os.getcwd()}")
+        print("\nRequired structure:")
+        print("model/")
+        print("├── data/")
+        print("│   ├── train/")
+        print("│   │   ├── real/")
+        print("│   │   └── fake/")
+        print("│   ├── val/")
+        print("│   │   ├── real/")
+        print("│   │   └── fake/")
+        print("│   └── test/")
+        print("│       ├── real/")
+        print("│       └── fake/")
+        print("├── evaluation_results/")
+        print("└── (models will be saved here)")
     
     # Demo inference
-    sample_image = "sample_image.jpg"
+    sample_image = "./model/cathedral.jpg"
     if os.path.exists(sample_image):
-        print(f"🔍 Testing on sample image: {sample_image}")
+        print(f"Testing on sample image: {sample_image}")
         results = detector.predict_ensemble(sample_image)
         
-        print("\n" + "="*60)
-        print("PREDICTION RESULTS")
-        print("="*60)
-        
-        for model_name, result in results.items():
-            emoji = "🔴" if result['label'] == 'FAKE' else "🟢"
-            print(f"{emoji} {model_name:<20} | {result['label']:<4} | "
-                  f"Confidence: {result['confidence']:.4f} | "
-                  f"Fake Prob: {result['fake_probability']:.4f}")
+        if results:
+            print("\n" + "="*60)
+            print("PREDICTION RESULTS")
+            print("="*60)
+            
+            for model_name, result in results.items():
+                res = "-" if result['label'] == 'FAKE' else "+"
+                print(f"{res} {model_name:<20} | {result['label']:<4} | "
+                      f"Confidence: {result['confidence']:.4f} | "
+                      f"Fake Prob: {result['fake_probability']:.4f}")
+        else:
+            print(" No predictions generated")
+    else:
+        print(f"\nSample image not found: {sample_image}")
     
-    print("\n✅ Enhanced Deepfake Detection System Ready!")
-
+    print("\nEnhanced Deepfake Detection System Ready!")
 if __name__ == "__main__":
     main()
