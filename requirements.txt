@@ -36,3 +36,7 @@ memory-profiler>=0.61.0
 pathlib>=1.0.0  # Usually included with Python 3.4+
 warnings  # Built-in Python module
 logging  # Built-in Python module
+
+fastapi # Main API framework
+pillow # library for operations with images
+python-multipart # for multipart form data
