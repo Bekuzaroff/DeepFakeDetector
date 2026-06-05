@@ -614,7 +614,7 @@ def main():
     print("Enhanced Deepfake Detection System")
     print("=====================================")
     
-    # Создаем структуру папок
+    # folder structure
     os.makedirs("./model", exist_ok=True)
     os.makedirs("./model/evaluation_results", exist_ok=True)
     

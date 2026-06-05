@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deepfake Detector</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🕵️ Deepfake Detector</h1>
+            <p class="subtitle">Загрузите фото для проверки на дипфейк</p>
+        </div>
+
+        <div class="upload-section">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📸</div>
+                <p>Нажмите или перетащите фото сюда</p>
+                <p class="upload-hint">Поддерживаются JPG, PNG, JPEG</p>
+                <input type="file" id="fileInput" accept="image/jpeg,image/png,image/jpg">
+            </div>
+
+            <div class="preview-section" id="previewSection" style="display: none;">
+                <img id="previewImage" alt="Preview">
+                <button class="remove-btn" id="removeBtn">✕</button>
+            </div>
+
+            <button class="detect-btn" id="detectBtn" disabled>🔍 Определить</button>
+        </div>
+
+        <div class="loader" id="loader">
+            <div class="spinner"></div>
+            <p>Анализируем изображение...</p>
+        </div>
+
+        <div class="result-section" id="resultSection" style="display: none;">
+            <div class="result-card">
+                <div class="result-icon" id="resultIcon"></div>
+                <h2 id="resultTitle"></h2>
+                <p id="resultMessage"></p>
+                <div class="confidence-bar">
+                    <div class="confidence-fill" id="confidenceFill"></div>
+                </div>
+                <p class="confidence-text" id="confidenceText"></p>
+                <button class="reset-btn" id="resetBtn">🔄 Проверить другое фото</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
